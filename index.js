@@ -1,8 +1,32 @@
-import fs from "fs-extra";
-import { exec, execFile } from "child_process";
+import { exec } from "child_process";
+import http from "http";
+import { promisify } from "util";
+
 import { WebSocketServer } from "ws";
 
-const SPACES_JSON = "/tmp/yabai-spaces.json";
+let yabaiState = {};
+const PORT = 9090;
+
+const execPromise = promisify(exec);
+
+const updateState = async () => {
+  const queries = ["displays", "spaces", "windows"].map((q) =>
+    execPromise(`/opt/homebrew/bin/yabai -m query --${q} | tr -d '\n\t'`).then(
+      ({ stdout }) => JSON.parse(stdout)
+    )
+  );
+  const [displays, spaces, windows] = await Promise.all(queries).catch(
+    (error) => {
+      console.error(error);
+    }
+  );
+  yabaiState = {
+    displays,
+    spaces,
+    windows,
+  };
+};
+
 const YABAI_EVENTS = [
   "application_launched",
   "application_terminated",
@@ -29,59 +53,61 @@ const YABAI_EVENTS = [
   "mission_control_exit",
   "dock_did_restart",
   "menu_bar_hidden_changed",
-  "dock_did_change_pref"
-]
-const UPDATE_SCRIPT = `${process.cwd()}/write-spaces-json.sh`
+  "dock_did_change_pref",
+];
+const UPDATE_SCRIPT = `/usr/bin/curl -s localhost:9090 > /dev/null`;
 
-execFile(UPDATE_SCRIPT, (error, _stdout, stderr) => {
-    if (error) {
-      console.log(`error: ${error.message}`);
-      return;
+YABAI_EVENTS.forEach((e) => {
+  exec(
+    `/opt/homebrew/bin/yabai -m signal --add event=${e} action="${UPDATE_SCRIPT}" label="yabai-spaces-server-${e}"`,
+    (error, _stdout, stderr) => {
+      if (error) {
+        console.log(`error: ${error.message}`);
+        return;
+      }
+      if (stderr) {
+        console.log(`stderr: ${stderr}`);
+        return;
+      }
+      console.log(`Added yabai signal for event ${e}`);
     }
-    if (stderr) {
-      console.log(`stderr: ${stderr}`);
-      return;
-    }
-    console.log(`Initial update succeeded.`);
-})
-
-YABAI_EVENTS.forEach(e => {
-  exec(`/opt/homebrew/bin/yabai -m signal --add event=${e} action="${UPDATE_SCRIPT}" label="yabai-spaces-server-${e}"`, (error, _stdout, stderr) => {
-    if (error) {
-      console.log(`error: ${error.message}`);
-      return;
-    }
-    if (stderr) {
-      console.log(`stderr: ${stderr}`);
-      return;
-    }
-    console.log(`Added yabai signal for event ${e}`);
-  })
+  );
 });
 
-const wss = new WebSocketServer({ port: 9090 });
+const server = http.createServer();
 
-const readSpaces = () => {
-  const spaces = fs.readFileSync(SPACES_JSON, "utf-8");
-  try {
-    return { content: JSON.parse(spaces), type: "SPACES_UPDATED" }
-  } catch (err) {
-    console.error(`Invalid json: partially written SPACES_JSON file? ${err}`);
-  }
-}
+const wss = new WebSocketServer({ server });
 
-wss.on("connection", ws => {
-  const spaces = readSpaces();
-  if (spaces) {
-    ws.send(JSON.stringify(spaces));
+const listener = async (req, res) => {
+  switch (req.url) {
+    case "/": {
+      await updateState();
+      res.setHeader("Content-Type", "application/json");
+      res.writeHead(200);
+      // TOOD: performance of parse/stringify vs store raw yabai response
+      // in object vs separate string variables.
+      emitUpdate(wss.clients);
+      res.end(JSON.stringify(yabaiState));
+      break;
+    }
+    default: {
+      res.writeHead(404);
+      res.end();
+    }
   }
+};
+
+server.addListener("request", listener);
+
+const emitUpdate = (clients) => {
+  const res = JSON.stringify({ content: yabaiState, type: "SPACES_UPDATED" });
+  clients.forEach((c) => c.send(res));
+};
+
+wss.on("connection", (ws) => {
+  emitUpdate([ws]);
   ws.on("close", () => console.log("client disconnected"));
   ws.onerror = (err) => console.error(err);
 });
 
-fs.watch(SPACES_JSON, () => {
-  const spaces = readSpaces();
-  if (spaces) {
-    wss.clients.forEach(client => client.send(JSON.stringify(spaces)));
-  }
-});
+server.listen(PORT);

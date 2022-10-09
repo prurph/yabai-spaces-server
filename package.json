@@ -4,6 +4,7 @@
   "description": "Broadcast yabai state over websockets",
   "main": "index.js",
   "scripts": {
+    "lint": "eslint '**/*.{js,jsx}'",
     "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -11,8 +12,16 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "fs-extra": "^10.1.0",
-    "watchr": "^6.11.0",
     "ws": "^8.9.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.25.0",
+    "eslint-config-airbnb": "^19.0.4",
+    "eslint-config-prettier": "^8.5.0",
+    "eslint-plugin-import": "^2.26.0",
+    "eslint-plugin-jsx-a11y": "^6.6.1",
+    "eslint-plugin-prettier": "^4.2.1",
+    "eslint-plugin-react": "^7.31.8",
+    "eslint-plugin-react-hooks": "^4.6.0"
   }
 }
