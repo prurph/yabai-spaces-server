@@ -4,7 +4,11 @@ import { promisify } from "util";
 
 import { WebSocketServer } from "ws";
 
-let yabaiState = {};
+let yabaiState = {
+  displays: [],
+  spaces: [],
+  windows: [],
+};
 const PORT = 9090;
 
 const execPromise = promisify(exec);
@@ -12,7 +16,13 @@ const execPromise = promisify(exec);
 const updateState = async () => {
   const queries = ["displays", "spaces", "windows"].map((q) =>
     execPromise(`/opt/homebrew/bin/yabai -m query --${q} | tr -d '\n\t'`).then(
-      ({ stdout }) => JSON.parse(stdout)
+      ({ stdout }) => {
+        try {
+          return JSON.parse(stdout);
+        } catch {
+          return;
+        }
+      }
     )
   );
   const [displays, spaces, windows] = await Promise.all(queries).catch(
@@ -21,9 +31,9 @@ const updateState = async () => {
     }
   );
   yabaiState = {
-    displays,
-    spaces,
-    windows,
+    displays: displays || yabaiState.displays,
+    spaces: spaces || yabaiState.spaces,
+    windows: windows || yabaiState.windows,
   };
 };
 
@@ -106,7 +116,6 @@ const emitUpdate = (clients) => {
 
 wss.on("connection", (ws) => {
   emitUpdate([ws]);
-  ws.on("close", () => console.log("client disconnected"));
   ws.onerror = (err) => console.error(err);
 });
 
