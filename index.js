@@ -120,3 +120,19 @@ wss.on("connection", (ws) => {
 });
 
 server.listen(PORT);
+
+updateState().then(() =>
+  exec(
+    `/usr/bin/osascript -e 'tell application id "tracesOf.Uebersicht" to refresh'`,
+    (error, _stdout, stderr) => {
+      if (error) {
+        console.log(`error refreshing Uebersicht: ${error.message}`);
+        return;
+      }
+      if (stderr) {
+        console.log(`stderr refreshing Uebersicht: ${stderr}`);
+        return;
+      }
+    }
+  )
+);
