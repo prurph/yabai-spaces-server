@@ -1,5 +1,6 @@
 import { exec } from "child_process";
 import http from "http";
+import url from "url";
 import { promisify } from "util";
 
 import { WebSocketServer } from "ws";
@@ -37,39 +38,52 @@ const updateState = async () => {
   };
 };
 
-const YABAI_EVENTS = [
-  "application_launched",
-  "application_terminated",
-  "application_front_switched",
-  "application_activated",
-  "application_deactivated",
-  "application_visible",
-  "application_hidden",
-  "window_created",
-  "window_destroyed",
-  "window_focused",
-  "window_moved",
-  "window_resized",
-  "window_minimized",
-  "window_deminimized",
-  "window_title_changed",
-  "space_changed",
-  "display_added",
-  "display_removed",
-  "display_moved",
-  "display_resized",
-  "display_changed",
-  "mission_control_enter",
-  "mission_control_exit",
-  "dock_did_restart",
-  "menu_bar_hidden_changed",
-  "dock_did_change_pref",
-];
-const UPDATE_SCRIPT = `/usr/bin/curl -s localhost:9090 > /dev/null`;
+const YABAI_EVENTS = {
+  application_launched: { env: ["YABAI_PROCESS_ID"] },
+  application_terminated: { env: ["YABAI_PROCESS_ID"] },
+  application_front_switched: {
+    env: ["YABAI_PROCESS_ID", "YABAI_RECENT_PROCESS_ID"],
+  },
+  application_activated: { env: ["YABAI_PROCESS_ID"] },
+  application_deactivated: { env: ["YABAI_PROCESS_ID"] },
+  application_visible: { env: ["YABAI_PROCESS_ID"] },
+  application_hidden: { env: ["YABAI_PROCESS_ID"] },
+  window_created: {
+    env: ["YABAI_WINDOW_ID"],
+    handler: ({ YABAI_WINDOW_ID }) => {
+      console.log(YABAI_WINDOW_ID);
+    },
+  },
+  window_destroyed: { env: ["YABAI_WINDOW_ID"] },
+  window_focused: { env: ["YABAI_WINDOW_ID"] },
+  window_moved: { env: ["YABAI_WINDOW_ID"] },
+  window_resized: { env: ["YABAI_WINDOW_ID"] },
+  window_minimized: { env: ["YABAI_WINDOW_ID"] },
+  window_deminimized: { env: ["YABAI_WINDOW_ID"] },
+  window_title_changed: { env: ["YABAI_WINDOW_ID"] },
+  space_changed: { env: ["YABAI_SPACE_ID", "YABAI_RECENT_SPACE_ID"] },
+  display_added: { env: ["YABAI_DISPLAY_ID"] },
+  display_removed: { env: ["YABAI_DISPLAY_ID"] },
+  display_moved: { env: ["YABAI_DISPLAY_ID"] },
+  display_resized: { env: ["YABAI_DISPLAY_ID"] },
+  display_changed: { env: ["YABAI_DISPLAY_ID", "YABAI_RECENT_DISPLAY_ID"] },
+  mission_control_enter: {},
+  mission_control_exit: {},
+  dock_did_restart: {},
+  menu_bar_hidden_changed: {},
+  dock_did_change_pref: {},
+};
 
-YABAI_EVENTS.forEach((e) => {
+Object.entries(YABAI_EVENTS).forEach(([event, env]) => {
+  // Unescaped double quotes so shell expands env variables like $YABAI_WINDOW_ID into
+  // their actual value, which we then receive as a url param.
+  const params = env.env?.map((p) => `${p}="$${p}"`).join("&");
+  // Quotes url to use params with curl. Escape them so shell passes them literally.
+  const action = `/usr/bin/curl -s \"localhost:9090/?signal=${event}${
+    params ? "&" + params : ""
+  }\"`;
   exec(
-    `/opt/homebrew/bin/yabai -m signal --add event=${e} action="${UPDATE_SCRIPT}" label="yabai-spaces-server-${e}"`,
+    `/opt/homebrew/bin/yabai -m signal --add event=${event} action='${action}' label='yabai-spaces-server-${event}'`,
     (error, _stdout, stderr) => {
       if (error) {
         console.log(`error: ${error.message}`);
@@ -79,7 +93,7 @@ YABAI_EVENTS.forEach((e) => {
         console.log(`stderr: ${stderr}`);
         return;
       }
-      console.log(`Added yabai signal for event ${e}`);
+      console.log(`Added yabai signal for event ${event}`);
     }
   );
 });
@@ -89,8 +103,13 @@ const server = http.createServer();
 const wss = new WebSocketServer({ server });
 
 const listener = async (req, res) => {
-  switch (req.url) {
+  const parsed = url.parse(req.url, true);
+  switch (parsed.pathname) {
     case "/": {
+      const event = YABAI_EVENTS[parsed.query?.signal];
+      if (event?.handler) {
+        event.handler(parsed.query);
+      }
       await updateState();
       res.setHeader("Content-Type", "application/json");
       res.writeHead(200);
