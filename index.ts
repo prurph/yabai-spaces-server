@@ -72,33 +72,36 @@ await updateState();
 Bun.serve({
   async fetch(req, server) {
     const url = new URL(req.url);
+    // http endpoints
     switch (url.pathname) {
+      // Incoming new websocket connection
       case '/ws': {
         if (server.upgrade(req)) {
           return;
         }
         return new Response('WebSocket upgrade failed', { status: 500 });
       }
+      // Get state
       case '/state': {
+        await updateState();
         return Response.json(state);
       }
+      // Incoming signals from yabai
       case '/signal': {
-        console.log(Object.fromEntries(url.searchParams.entries()));
+        await updateState();
+        return new Response(null, { status: 200 });
       }
     }
   },
   websocket: {
     open(ws) {
-      console.log('New socket opened');
       ws.subscribe('yabai-events');
       ws.send(JSON.stringify(state));
     },
     close(ws) {
-      console.log('Socket closed');
       ws.unsubscribe('yabai-events');
     },
     message(ws, msg) {
-      console.log('Received message', msg);
       if (msg === 'state') {
         ws.send(JSON.stringify(state));
       }
